@@ -296,10 +296,20 @@ step_install_hook() {
     local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
     local hook_src="$script_dir/../hooks/bluetooth-firmware.hook"
 
+    # step_clone_source must have resolved and exported this already.
+    if [ -z "$MT7902_SOURCE_DIR" ]; then
+        error_exit "MT7902_SOURCE_DIR is not set; step_clone_source must run first."
+    fi
+
     mkdir -p "$HOOK_DIR"
-    cp "$hook_src" "$HOOK_DIR/bluetooth-firmware.hook"
+    # Bake the absolute driver source path into the hook's Exec line.
+    # pacman runs hooks as root, so the rebuild script's $HOME-relative
+    # default would resolve to /root and fail -- the path must be explicit.
+    sed "s|@@MT7902_SOURCE_DIR@@|${MT7902_SOURCE_DIR}|g" "$hook_src" \
+        > "$HOOK_DIR/bluetooth-firmware.hook"
 
     success "Pacman hook installed to: $HOOK_DIR/bluetooth-firmware.hook"
+    info "  Driver source path baked into hook: $MT7902_SOURCE_DIR"
 }
 
 step_test_rebuild() {

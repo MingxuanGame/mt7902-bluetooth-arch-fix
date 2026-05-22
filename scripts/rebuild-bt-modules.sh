@@ -178,13 +178,17 @@ for KDIR in /lib/modules/*/build; do
 
     if [ "$all_modules_exist" = true ]; then
         log "Modules already exist for $KVER, skipping"
-        ((skip_count++))
+        # Plain assignment, not ((skip_count++)): a post-increment from 0
+        # returns exit status 1, which `set -e` treats as a fatal error.
+        skip_count=$((skip_count + 1))
         continue
     fi
 
     # Build modules for this kernel
     if build_modules_for_kernel "$KVER"; then
-        ((build_count++))
+        # Plain assignment, not ((build_count++)): a post-increment from 0
+        # returns exit status 1, which `set -e` treats as a fatal error.
+        build_count=$((build_count + 1))
     fi
 done
 

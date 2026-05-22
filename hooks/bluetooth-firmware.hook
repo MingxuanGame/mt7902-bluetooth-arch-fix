@@ -6,7 +6,10 @@
 # and restores firmware files after kernel or firmware package updates.
 #
 # Installation:
-#   sudo cp bluetooth-firmware.hook /etc/pacman.d/hooks/
+#   Use scripts/install.sh -- it substitutes the source-path placeholder
+#   in the Exec line below with the real driver source path.
+#   A plain `cp` of this file will NOT work: pacman runs hooks as root,
+#   so the Exec line must carry an absolute source path explicitly.
 #
 # Documentation: https://man.archlinux.org/man/alpm-hooks.5
 #
@@ -44,7 +47,12 @@ When = PostTransaction
 #   4. Restoring firmware files from backup
 #   5. Running depmod to update module dependencies
 #   6. Logging all operations to /var/log/bt-module-rebuild.log
-Exec = /opt/bluetooth-firmware-backup/rebuild-bt-modules.sh
+#
+# pacman runs hooks as root, so the rebuild script's $HOME-based default
+# for the driver source would resolve to /root and fail. install.sh
+# substitutes the placeholder below with the absolute source path and
+# passes it via `env` so the script finds the driver regardless of $HOME.
+Exec = /usr/bin/env MT7902_SOURCE_DIR=@@MT7902_SOURCE_DIR@@ /opt/bluetooth-firmware-backup/rebuild-bt-modules.sh
 
 # Optional: Dependencies
 # If the hook should only run when certain packages are installed,
