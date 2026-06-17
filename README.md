@@ -18,10 +18,11 @@ The MediaTek MT7902 Bluetooth adapter requires custom firmware and patched kerne
 ## The Solution
 
 This repository provides an **automated pacman hook** that:
-1. Detects kernel updates (`linux`, `linux-headers`, `linux-firmware`)
-2. Automatically rebuilds custom kernel modules for the new kernel
-3. Restores firmware files from backup
-4. Ensures Bluetooth continues working after every system update
+1. Detects updates for common Arch kernel packages, matching headers, and `linux-firmware`
+2. Builds custom kernel modules for the current kernel during installation
+3. Automatically rebuilds modules for installed kernels after future kernel updates
+4. Restores firmware files from backup
+5. Ensures Bluetooth continues working after every system update
 
 > 📖 **Interested in the journey?** Read [The Development Story](docs/DEVELOPMENT-STORY.md) to see how this solution was discovered through debugging, failed attempts, and eventual automation.
 
@@ -29,7 +30,7 @@ This repository provides an **automated pacman hook** that:
 
 - **Arch Linux** or derivatives (Manjaro, EndeavourOS, etc.)
 - **MediaTek MT7902 Bluetooth adapter**
-- Packages: `linux`, `linux-headers`, `base-devel`, `git`
+- Packages: headers matching the current kernel (`uname -r`), `base-devel`, `git`
 - **Firmware files** (extract from Windows dual-boot or existing installation)
 
 ## Quick Installation
@@ -60,7 +61,9 @@ The installer will:
 #### Step 1: Install Prerequisites
 
 ```bash
-sudo pacman -S linux-headers base-devel git
+# Use the headers package that matches your current kernel.
+# Examples: linux-headers, linux-lts-headers, linux-zen-headers, linux-hardened-headers
+sudo pacman -S "$(cat /lib/modules/$(uname -r)/pkgbase)-headers" base-devel git
 ```
 
 #### Step 2: Clone MT7902 Driver Source
@@ -110,13 +113,15 @@ sudo chmod +x /opt/bluetooth-firmware-backup/rebuild-bt-modules.sh
 #### Step 5: Install Pacman Hook
 
 ```bash
-sudo cp hooks/bluetooth-firmware.hook /etc/pacman.d/hooks/
+sudo mkdir -p /etc/pacman.d/hooks
+sed "s|@@MT7902_SOURCE_ROOT@@|$HOME/mt7902_temp|g" hooks/bluetooth-firmware.hook \
+  | sudo tee /etc/pacman.d/hooks/bluetooth-firmware.hook >/dev/null
 ```
 
 #### Step 6: Initial Build
 
 ```bash
-sudo /opt/bluetooth-firmware-backup/rebuild-bt-modules.sh
+sudo MT7902_SOURCE_ROOT="$HOME/mt7902_temp" /opt/bluetooth-firmware-backup/rebuild-bt-modules.sh
 ```
 
 Check the log for success:
@@ -141,7 +146,7 @@ The solution consists of three components:
    - Installed to `/lib/modules/$KERNEL_VERSION/updates/`
 
 3. **Pacman Hook** (automatic trigger)
-   - Runs after `linux`, `linux-headers`, or `linux-firmware` updates
+   - Runs after common Arch kernel, matching headers, or `linux-firmware` updates
    - Executes rebuild script
    - Logs to `/var/log/bt-module-rebuild.log`
 

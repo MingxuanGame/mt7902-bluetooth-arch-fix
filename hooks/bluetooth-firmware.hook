@@ -3,11 +3,11 @@
 # Part of: https://github.com/ismailtrm/mt7902-bluetooth-arch-fix
 #
 # This hook automatically rebuilds MT7902 Bluetooth kernel modules
-# and restores firmware files after kernel or firmware package updates.
+# for installed kernels with headers and restores firmware files.
 #
 # Installation:
-#   Use scripts/install.sh -- it substitutes the source-path placeholder
-#   in the Exec line below with the real driver source path.
+#   Use scripts/install.sh -- it substitutes the source-root placeholder
+#   in the Exec line below with the real mt7902_temp path.
 #   A plain `cp` of this file will NOT work: pacman runs hooks as root,
 #   so the Exec line must carry an absolute source path explicitly.
 #
@@ -23,11 +23,17 @@ Operation = Upgrade
 Type = Package
 
 # Packages that trigger this hook:
-# - linux: Kernel package updates
-# - linux-headers: Kernel headers needed for module compilation
+# - linux variants: Kernel package updates
+# - matching headers: Kernel headers needed for module compilation
 # - linux-firmware: System firmware updates (may affect bluetooth)
 Target = linux
 Target = linux-headers
+Target = linux-lts
+Target = linux-lts-headers
+Target = linux-zen
+Target = linux-zen-headers
+Target = linux-hardened
+Target = linux-hardened-headers
 Target = linux-firmware
 
 [Action]
@@ -41,7 +47,7 @@ When = PostTransaction
 
 # Command to execute
 # The rebuild script handles:
-#   1. Detecting new kernel versions
+#   1. Detecting installed kernel versions with headers
 #   2. Compiling btmtk.ko and btusb.ko modules
 #   3. Installing modules to /lib/modules/$KVER/updates/
 #   4. Restoring firmware files from backup
@@ -50,9 +56,9 @@ When = PostTransaction
 #
 # pacman runs hooks as root, so the rebuild script's $HOME-based default
 # for the driver source would resolve to /root and fail. install.sh
-# substitutes the placeholder below with the absolute source path and
+# substitutes the placeholder below with the absolute mt7902_temp path and
 # passes it via `env` so the script finds the driver regardless of $HOME.
-Exec = /usr/bin/env MT7902_SOURCE_DIR=@@MT7902_SOURCE_DIR@@ /opt/bluetooth-firmware-backup/rebuild-bt-modules.sh
+Exec = /usr/bin/env MT7902_BUILD_ALL_KERNELS=1 MT7902_SOURCE_ROOT=@@MT7902_SOURCE_ROOT@@ /opt/bluetooth-firmware-backup/rebuild-bt-modules.sh
 
 # Optional: Dependencies
 # If the hook should only run when certain packages are installed,

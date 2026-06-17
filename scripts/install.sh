@@ -84,6 +84,39 @@ check_command() {
     return 0
 }
 
+detect_headers_package() {
+    local kernel_version="$1"
+    local pkgbase_file="/lib/modules/$kernel_version/pkgbase"
+    local pkgbase=""
+
+    if [ -r "$pkgbase_file" ]; then
+        pkgbase="$(<"$pkgbase_file")"
+        if [ -n "$pkgbase" ]; then
+            printf '%s-headers\n' "$pkgbase"
+            return 0
+        fi
+    fi
+
+    case "$kernel_version" in
+        *-arch*) printf 'linux-headers\n' ;;
+        *-lts*) printf 'linux-lts-headers\n' ;;
+        *-zen*) printf 'linux-zen-headers\n' ;;
+        *-hardened*) printf 'linux-hardened-headers\n' ;;
+        *) return 1 ;;
+    esac
+}
+
+kernel_series() {
+    local kernel_version="$1"
+
+    if [[ "$kernel_version" =~ ^([0-9]+)\.([0-9]+) ]]; then
+        printf '%s.%s\n' "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+        return 0
+    fi
+
+    return 1
+}
+
 verify_checksum() {
     local file="$1"
     local expected_checksum="$2"
@@ -112,14 +145,24 @@ step_check_prerequisites() {
     info "Checking prerequisites..."
 
     local missing_packages=()
+    local current_kernel
+    local current_build_dir
+    local current_headers_package
+
+    current_kernel="$(uname -r)"
+    current_build_dir="/lib/modules/$current_kernel/build"
 
     # Check required packages
-    if ! pacman -Q linux &>/dev/null; then
-        missing_packages+=("linux")
-    fi
+    if [ ! -d "$current_build_dir" ]; then
+        warn "Headers for the current kernel are missing: $current_build_dir"
+        if current_headers_package="$(detect_headers_package "$current_kernel")"; then
+            missing_packages+=("$current_headers_package")
+        else
+            error_exit "Could not determine the headers package for current kernel: $current_kernel
 
-    if ! pacman -Q linux-headers &>/dev/null; then
-        missing_packages+=("linux-headers")
+Install the matching headers package for your running kernel, then rerun this script.
+If you just upgraded the kernel, reboot into the new kernel first."
+        fi
     fi
 
     if ! pacman -Q base-devel &>/dev/null; then
@@ -141,7 +184,14 @@ step_check_prerequisites() {
         fi
     fi
 
-    success "All prerequisites met"
+    if [ ! -d "$current_build_dir" ]; then
+        error_exit "Headers for the current kernel are still missing: $current_build_dir
+
+Install the matching headers package for $current_kernel, then rerun this script.
+If you just upgraded the kernel, reboot into the new kernel first."
+    fi
+
+    success "All prerequisites met for current kernel: $current_kernel"
 }
 
 step_clone_source() {
@@ -150,14 +200,17 @@ step_clone_source() {
     # Get actual user's home directory (even when running with sudo)
     local REAL_USER="${SUDO_USER:-$USER}"
     local REAL_HOME=$(eval echo "~$REAL_USER")
-    DEFAULT_SOURCE_DIR="$REAL_HOME/mt7902_temp"
+    local current_kernel
+    local current_series
+    local driver_source_dir
+    DEFAULT_SOURCE_DIR="${MT7902_SOURCE_ROOT:-$REAL_HOME/mt7902_temp}"
 
     if [ -d "$DEFAULT_SOURCE_DIR" ]; then
         success "Source directory already exists: $DEFAULT_SOURCE_DIR"
         read -p "Use existing directory? (Y/n): " -n 1 -r
         echo
         if [[ $REPLY =~ ^[Nn]$ ]]; then
-            read -p "Enter alternative path: " SOURCE_DIR
+            read -p "Enter alternative mt7902_temp root path: " SOURCE_DIR
         else
             SOURCE_DIR="$DEFAULT_SOURCE_DIR"
         fi
@@ -168,8 +221,22 @@ step_clone_source() {
         success "Source cloned to: $SOURCE_DIR"
     fi
 
-    # Export for rebuild script
-    export MT7902_SOURCE_DIR="$SOURCE_DIR/linux-6.18/drivers/bluetooth"
+    current_kernel="$(uname -r)"
+    if ! current_series="$(kernel_series "$current_kernel")"; then
+        error_exit "Could not determine kernel source series from current kernel: $current_kernel"
+    fi
+
+    driver_source_dir="$SOURCE_DIR/linux-$current_series/drivers/bluetooth"
+    if [ ! -d "$driver_source_dir" ]; then
+        error_exit "Driver source for current kernel $current_kernel was not found: $driver_source_dir
+
+Ensure mt7902_temp contains linux-$current_series support."
+    fi
+
+    # Export for rebuild script and pacman hook installation.
+    export MT7902_SOURCE_ROOT="$SOURCE_DIR"
+    export MT7902_SOURCE_DIR="$driver_source_dir"
+    success "Using driver source for current kernel ($current_kernel): $MT7902_SOURCE_DIR"
 }
 
 step_get_firmware() {
@@ -297,19 +364,19 @@ step_install_hook() {
     local hook_src="$script_dir/../hooks/bluetooth-firmware.hook"
 
     # step_clone_source must have resolved and exported this already.
-    if [ -z "$MT7902_SOURCE_DIR" ]; then
-        error_exit "MT7902_SOURCE_DIR is not set; step_clone_source must run first."
+    if [ -z "$MT7902_SOURCE_ROOT" ]; then
+        error_exit "MT7902_SOURCE_ROOT is not set; step_clone_source must run first."
     fi
 
     mkdir -p "$HOOK_DIR"
-    # Bake the absolute driver source path into the hook's Exec line.
+    # Bake the absolute driver source root into the hook's Exec line.
     # pacman runs hooks as root, so the rebuild script's $HOME-relative
     # default would resolve to /root and fail -- the path must be explicit.
-    sed "s|@@MT7902_SOURCE_DIR@@|${MT7902_SOURCE_DIR}|g" "$hook_src" \
+    sed "s|@@MT7902_SOURCE_ROOT@@|${MT7902_SOURCE_ROOT}|g" "$hook_src" \
         > "$HOOK_DIR/bluetooth-firmware.hook"
 
     success "Pacman hook installed to: $HOOK_DIR/bluetooth-firmware.hook"
-    info "  Driver source path baked into hook: $MT7902_SOURCE_DIR"
+    info "  Driver source root baked into hook: $MT7902_SOURCE_ROOT"
 }
 
 step_test_rebuild() {

@@ -182,10 +182,11 @@ Multiple versions may exist in DriverStore. We use the one from `System32/driver
 ### Prerequisites
 
 ```bash
-sudo pacman -S linux-headers base-devel
+# Use the headers package that matches your current kernel.
+sudo pacman -S "$(cat /lib/modules/$(uname -r)/pkgbase)-headers" base-devel
 ```
 
-- `linux-headers` - Kernel headers for the target kernel version
+- Matching kernel headers - Kernel headers for the target kernel version
 - `base-devel` - Build tools (gcc, make, etc.)
 
 ### Build Process
@@ -193,7 +194,7 @@ sudo pacman -S linux-headers base-devel
 The build uses the kernel's module build system (kbuild):
 
 ```bash
-# Location: ~/mt7902_temp/linux-6.18/drivers/bluetooth/
+# Location: ~/mt7902_temp/linux-<kernel-major.minor>/drivers/bluetooth/
 
 # Makefile specifies:
 obj-m += btusb.o
@@ -243,7 +244,7 @@ Pacman hooks allow automatic actions during package operations.
    ↓
 6. Execute: rebuild-bt-modules.sh
    ↓
-7. Script rebuilds modules for 6.18.5
+7. Script rebuilds missing modules for installed kernels with headers
    ↓
 8. Pacman operation complete
    ↓
@@ -260,6 +261,12 @@ Operation = Install | Upgrade
 Type = Package
 Target = linux
 Target = linux-headers
+Target = linux-lts
+Target = linux-lts-headers
+Target = linux-zen
+Target = linux-zen-headers
+Target = linux-hardened
+Target = linux-hardened-headers
 Target = linux-firmware
 
 [Action]
@@ -367,21 +374,24 @@ The script uses several strategies for robustness:
 1. **Validation before action:** Check all prerequisites before starting
 2. **Per-kernel error isolation:** If build fails for one kernel, continue with others
 3. **Detailed logging:** All operations logged to `/var/log/bt-module-rebuild.log`
-4. **Non-blocking failures:** Script exits with 0 even if some kernels fail (allows pacman to complete)
+4. **Clear failure status:** Script exits non-zero if a module build fails
 
 ### Environment Variables
 
 The script supports customization via environment variables:
 
 ```bash
-MT7902_SOURCE_DIR="~/custom/path" \
+MT7902_SOURCE_ROOT="$HOME/mt7902_temp" \
+MT7902_KERNEL_VERSION="$(uname -r)" \
 MT7902_BACKUP_DIR="/custom/backup" \
 MT7902_LOG_FILE="/custom/log.log" \
 rebuild-bt-modules.sh
 ```
 
 Defaults:
-- `MT7902_SOURCE_DIR`: `$HOME/mt7902_temp/linux-6.18/drivers/bluetooth`
+- `MT7902_KERNEL_VERSION`: `$(uname -r)`
+- `MT7902_SOURCE_ROOT`: `$HOME/mt7902_temp`
+- `MT7902_SOURCE_DIR`: `$MT7902_SOURCE_ROOT/linux-<kernel-major.minor>/drivers/bluetooth`
 - `MT7902_BACKUP_DIR`: `/opt/bluetooth-firmware-backup`
 - `MT7902_LOG_FILE`: `/var/log/bt-module-rebuild.log`
 
@@ -495,8 +505,8 @@ dmesg | grep -i firmware | grep -i mt7902
 cat /var/log/bt-module-rebuild.log
 
 # Run rebuild script manually (with verbose output)
-sudo /opt/bluetooth-firmware-backup/rebuild-bt-modules.sh
+sudo MT7902_SOURCE_ROOT="$HOME/mt7902_temp" /opt/bluetooth-firmware-backup/rebuild-bt-modules.sh
 
 # Check rebuild script configuration
-grep -E "^(SOURCE_DIR|BACKUP_DIR|LOG_FILE)" /opt/bluetooth-firmware-backup/rebuild-bt-modules.sh
+grep -E "^(TARGET_KERNEL_VERSION|BUILD_ALL_KERNELS|SOURCE_ROOT|BACKUP_DIR|LOG_FILE)" /opt/bluetooth-firmware-backup/rebuild-bt-modules.sh
 ```

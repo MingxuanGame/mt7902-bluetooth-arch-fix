@@ -23,7 +23,7 @@ uname -r
 
 **Installed packages:**
 ```bash
-pacman -Q linux linux-headers base-devel
+pacman -Q "$(cat /lib/modules/$(uname -r)/pkgbase)" "$(cat /lib/modules/$(uname -r)/pkgbase)-headers" base-devel
 # Paste output here
 ```
 
@@ -103,9 +103,9 @@ cat /etc/pacman.d/hooks/bluetooth-firmware.hook
 
 <!-- List troubleshooting steps you've already attempted -->
 
-- [ ] Ran rebuild script manually: `sudo /opt/bluetooth-firmware-backup/rebuild-bt-modules.sh`
+- [ ] Ran rebuild script manually: `sudo MT7902_SOURCE_ROOT="$HOME/mt7902_temp" /opt/bluetooth-firmware-backup/rebuild-bt-modules.sh`
 - [ ] Checked firmware checksums
-- [ ] Reinstalled linux-headers
+- [ ] Reinstalled matching kernel headers
 - [ ] Checked pacman hooks directory
 - [ ] Other (please specify):
 

@@ -29,7 +29,7 @@ cat /var/log/bt-module-rebuild.log
 
 **Common causes and solutions:**
 
-#### 1. Missing linux-headers
+#### 1. Missing matching kernel headers
 
 **Error in log:**
 ```
@@ -38,7 +38,9 @@ make: *** /lib/modules/6.x.x/build: No such file or directory
 
 **Solution:**
 ```bash
-sudo pacman -S linux-headers
+# Use the package that matches `uname -r`.
+# Examples: linux-headers, linux-lts-headers, linux-zen-headers
+sudo pacman -S "$(cat /lib/modules/$(uname -r)/pkgbase)-headers"
 ```
 
 **Verify:**
@@ -56,7 +58,8 @@ fatal error: linux/module.h: No such file or directory
 **Solution:**
 ```bash
 # Reinstall headers
-sudo pacman -S --force linux-headers
+# Use the package that matches `uname -r`.
+sudo pacman -S "$(cat /lib/modules/$(uname -r)/pkgbase)-headers"
 
 # Or if using multiple kernels:
 sudo pacman -S linux-lts-headers
@@ -75,9 +78,8 @@ ERROR: Source directory not found: /home/user/mt7902_temp/...
 cd ~
 git clone https://github.com/OnlineLearningTutorials/mt7902_temp
 
-# Or update MT7902_SOURCE_DIR in rebuild script
-sudo nano /opt/bluetooth-firmware-backup/rebuild-bt-modules.sh
-# Change: SOURCE_DIR="/path/to/your/mt7902_temp/linux-6.18/drivers/bluetooth"
+# Or run the script with an explicit mt7902_temp source root
+sudo MT7902_SOURCE_ROOT="$HOME/mt7902_temp" /opt/bluetooth-firmware-backup/rebuild-bt-modules.sh
 ```
 
 #### 4. Build system errors (kernel API changes)
@@ -182,7 +184,7 @@ modinfo /lib/modules/$(uname -r)/updates/btusb.ko | grep vermagic
 uname -r
 
 # If mismatch, rebuild:
-sudo /opt/bluetooth-firmware-backup/rebuild-bt-modules.sh
+sudo MT7902_SOURCE_ROOT="$HOME/mt7902_temp" /opt/bluetooth-firmware-backup/rebuild-bt-modules.sh
 ```
 
 ### Bluetooth works initially but stops after suspend/resume
@@ -418,7 +420,7 @@ git pull origin main
 # Check for new kernel version directories
 ls -ld linux-6.*
 
-# If linux-6.19 exists, update SOURCE_DIR in rebuild script
+# If linux-6.19 exists, rerun the rebuild script with MT7902_SOURCE_ROOT set
 ```
 
 #### Option 2: Use LTS kernel
@@ -551,7 +553,7 @@ dmesg | grep -i bluetooth
 tail -f /var/log/bt-module-rebuild.log
 
 # Manually run rebuild
-sudo /opt/bluetooth-firmware-backup/rebuild-bt-modules.sh
+sudo MT7902_SOURCE_ROOT="$HOME/mt7902_temp" /opt/bluetooth-firmware-backup/rebuild-bt-modules.sh
 
 # Restart Bluetooth service
 sudo systemctl restart bluetooth

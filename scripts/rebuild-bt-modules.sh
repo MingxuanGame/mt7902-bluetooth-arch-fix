@@ -3,9 +3,9 @@
 # MediaTek MT7902 Bluetooth Module Rebuild Script
 # Part of: https://github.com/ismailtrm/mt7902-bluetooth-arch-fix
 #
-# This script automatically rebuilds MT7902 Bluetooth kernel modules
-# for newly installed kernels and restores firmware files from backup.
-# It is triggered by a pacman hook after kernel updates.
+# This script rebuilds MT7902 Bluetooth kernel modules for the currently
+# running kernel by default, then restores firmware files from backup.
+# Pacman hooks can opt into rebuilding all installed kernels with headers.
 #
 
 set -e
@@ -14,9 +14,19 @@ set -e
 # Configuration - Can be overridden via environment variables
 #############################################################################
 
-# Source directory containing MT7902 Bluetooth driver code
-# Default: ~/mt7902_temp/linux-6.18/drivers/bluetooth
-SOURCE_DIR="${MT7902_SOURCE_DIR:-$HOME/mt7902_temp/linux-6.18/drivers/bluetooth}"
+# Kernel version to build for; defaults to the currently running kernel.
+TARGET_KERNEL_VERSION="${MT7902_KERNEL_VERSION:-$(uname -r)}"
+
+# Build all installed kernels with headers when explicitly requested.
+BUILD_ALL_KERNELS="${MT7902_BUILD_ALL_KERNELS:-0}"
+
+# Root directory containing mt7902_temp kernel-version source trees.
+# Default: ~/mt7902_temp
+SOURCE_ROOT="${MT7902_SOURCE_ROOT:-$HOME/mt7902_temp}"
+
+# Source directory containing MT7902 Bluetooth driver code.
+# Default: $SOURCE_ROOT/linux-<target-kernel-major.minor>/drivers/bluetooth
+SOURCE_DIR_OVERRIDE="${MT7902_SOURCE_DIR:-}"
 
 # Backup directory containing firmware files
 # Default: /opt/bluetooth-firmware-backup
@@ -51,15 +61,41 @@ error_exit() {
     exit 1
 }
 
+source_dir_for_kernel() {
+    local KVER="$1"
+
+    if [ -n "$SOURCE_DIR_OVERRIDE" ]; then
+        printf '%s\n' "$SOURCE_DIR_OVERRIDE"
+        return 0
+    fi
+
+    if [[ "$KVER" =~ ^([0-9]+)\.([0-9]+) ]]; then
+        printf '%s/linux-%s.%s/drivers/bluetooth\n' \
+            "$SOURCE_ROOT" "${BASH_REMATCH[1]}" "${BASH_REMATCH[2]}"
+        return 0
+    fi
+
+    return 1
+}
+
 validate_environment() {
     # Check if source directory exists
-    if [ ! -d "$SOURCE_DIR" ]; then
-        error_exit "Source directory not found: $SOURCE_DIR
+    if [ -n "$SOURCE_DIR_OVERRIDE" ]; then
+        if [ ! -d "$SOURCE_DIR_OVERRIDE" ]; then
+            error_exit "Source directory not found: $SOURCE_DIR_OVERRIDE
 
 Please ensure mt7902_temp repository is cloned:
   git clone https://github.com/OnlineLearningTutorials/mt7902_temp ~/mt7902_temp
 
-Or set MT7902_SOURCE_DIR environment variable to the correct path."
+Or set MT7902_SOURCE_ROOT to the mt7902_temp path, or MT7902_SOURCE_DIR to the exact drivers/bluetooth path."
+        fi
+    elif [ ! -d "$SOURCE_ROOT" ]; then
+        error_exit "Source root not found: $SOURCE_ROOT
+
+Please ensure mt7902_temp repository is cloned:
+  git clone https://github.com/OnlineLearningTutorials/mt7902_temp ~/mt7902_temp
+
+Or set MT7902_SOURCE_ROOT to the mt7902_temp path."
     fi
 
     # Check if backup directory exists
@@ -78,18 +114,28 @@ Please extract firmware from Windows and copy to backup directory."
         fi
     done
 
-    # Check if at least one kernel with headers is installed
-    local has_kernel=false
-    for kdir in /lib/modules/*/build; do
-        if [ -d "$kdir" ]; then
-            has_kernel=true
-            break
-        fi
-    done
+    if [ "$BUILD_ALL_KERNELS" = "1" ]; then
+        local has_kernel=false
+        for kdir in /lib/modules/*/build; do
+            if [ -d "$kdir" ]; then
+                has_kernel=true
+                break
+            fi
+        done
 
-    if [ ! "$has_kernel" = true ]; then
-        error_exit "No kernel headers found. Please install linux-headers:
-  sudo pacman -S linux-headers"
+        if [ ! "$has_kernel" = true ]; then
+            error_exit "No kernel headers found. Please install the matching headers package for your kernel."
+        fi
+    elif [ ! -d "/lib/modules/$TARGET_KERNEL_VERSION/build" ]; then
+        error_exit "No kernel headers found for target kernel: $TARGET_KERNEL_VERSION
+
+Please install the matching headers package for your current kernel.
+Examples:
+  sudo pacman -S linux-headers
+  sudo pacman -S linux-lts-headers
+  sudo pacman -S linux-zen-headers
+
+If you just upgraded the kernel, reboot into the new kernel first."
     fi
 }
 
@@ -97,29 +143,47 @@ build_modules_for_kernel() {
     local KVER="$1"
     local KDIR="/lib/modules/$KVER/build"
     local UPDATES_DIR="/lib/modules/$KVER/updates"
+    local BUILD_SOURCE_DIR
+
+    if ! BUILD_SOURCE_DIR="$(source_dir_for_kernel "$KVER")"; then
+        log "ERROR: Could not determine driver source for kernel $KVER"
+        return 1
+    fi
+
+    if [ ! -d "$BUILD_SOURCE_DIR" ]; then
+        log "ERROR: Driver source not found for kernel $KVER: $BUILD_SOURCE_DIR"
+        return 1
+    fi
 
     log "Building modules for kernel $KVER"
+    log "  Source: $BUILD_SOURCE_DIR"
 
     # Create updates directory if needed
     mkdir -p "$UPDATES_DIR"
 
     # Clean previous build artifacts
-    cd "$SOURCE_DIR"
-    make -C "$KDIR" M="$SOURCE_DIR" clean 2>/dev/null || true
+    cd "$BUILD_SOURCE_DIR"
+    make -C "$KDIR" M="$BUILD_SOURCE_DIR" clean 2>/dev/null || true
 
     # Build modules for this kernel version
-    if make -C "$KDIR" M="$SOURCE_DIR" modules >> "$LOG_FILE" 2>&1; then
+    if make -C "$KDIR" M="$BUILD_SOURCE_DIR" modules >> "$LOG_FILE" 2>&1; then
         log "Build successful for $KVER"
+        local missing_module=false
 
         # Copy modules to updates directory
         for module in "${MODULE_FILES[@]}"; do
-            if [ -f "$SOURCE_DIR/$module" ]; then
-                cp "$SOURCE_DIR/$module" "$UPDATES_DIR/"
+            if [ -f "$BUILD_SOURCE_DIR/$module" ]; then
+                cp "$BUILD_SOURCE_DIR/$module" "$UPDATES_DIR/"
                 log "  Installed: $module"
             else
-                log "  WARNING: Module not found after build: $module"
+                log "  ERROR: Module not found after build: $module"
+                missing_module=true
             fi
         done
+
+        if [ "$missing_module" = true ]; then
+            return 1
+        fi
 
         # Update module dependencies
         depmod "$KVER"
@@ -148,27 +212,11 @@ restore_firmware() {
     done
 }
 
-#############################################################################
-# Main Script
-#############################################################################
+process_kernel() {
+    local KVER="$1"
+    local UPDATES_DIR="/lib/modules/$KVER/updates"
+    local all_modules_exist=true
 
-log "=== Starting MT7902 Bluetooth module rebuild ==="
-
-# Validate environment and prerequisites
-validate_environment
-
-# Find all installed kernel versions that have build directories (headers installed)
-build_count=0
-skip_count=0
-
-for KDIR in /lib/modules/*/build; do
-    [ -d "$KDIR" ] || continue
-
-    KVER=$(basename $(dirname "$KDIR"))
-    UPDATES_DIR="/lib/modules/$KVER/updates"
-
-    # Check if modules already exist for this kernel
-    all_modules_exist=true
     for module in "${MODULE_FILES[@]}"; do
         if [ ! -f "$UPDATES_DIR/$module" ]; then
             all_modules_exist=false
@@ -181,21 +229,52 @@ for KDIR in /lib/modules/*/build; do
         # Plain assignment, not ((skip_count++)): a post-increment from 0
         # returns exit status 1, which `set -e` treats as a fatal error.
         skip_count=$((skip_count + 1))
-        continue
+        return 0
     fi
 
-    # Build modules for this kernel
     if build_modules_for_kernel "$KVER"; then
         # Plain assignment, not ((build_count++)): a post-increment from 0
         # returns exit status 1, which `set -e` treats as a fatal error.
         build_count=$((build_count + 1))
+    else
+        build_failed=true
     fi
-done
+}
+
+#############################################################################
+# Main Script
+#############################################################################
+
+log "=== Starting MT7902 Bluetooth module rebuild ==="
+
+# Validate environment and prerequisites
+validate_environment
+
+# Build only for the currently running kernel by default.
+build_count=0
+skip_count=0
+build_failed=false
+
+if [ "$BUILD_ALL_KERNELS" = "1" ]; then
+    for KDIR in /lib/modules/*/build; do
+        [ -d "$KDIR" ] || continue
+        KVER=$(basename "$(dirname "$KDIR")")
+        process_kernel "$KVER"
+    done
+else
+    process_kernel "$TARGET_KERNEL_VERSION"
+fi
 
 # Restore firmware files
 restore_firmware
 
 # Summary
+if [ "$build_failed" = true ]; then
+    log "=== Bluetooth module rebuild failed ==="
+    log "Summary: Built for $build_count kernel(s), skipped $skip_count kernel(s)"
+    exit 1
+fi
+
 log "=== Bluetooth module rebuild complete ==="
 log "Summary: Built for $build_count kernel(s), skipped $skip_count kernel(s)"
 
